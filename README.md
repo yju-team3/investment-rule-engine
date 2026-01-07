@@ -42,6 +42,17 @@ APPROVE / WAIT / REJECT
 - 금지 사항
 ```
 
+## 4. CLI 사용법
+
+```bash
+python -m decision_engine.run --ticker PG
+```
+
+추가 옵션:
+
+- `--market-regime {RISK_ON,NEUTRAL,RISK_OFF}`: 시장 레짐을 강제로 지정
+- `--json`: 동일한 결과를 JSON으로도 출력
+
 ## 테스트
 
 ```bash
