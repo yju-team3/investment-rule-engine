@@ -48,9 +48,17 @@ APPROVE / WAIT / REJECT
 python -m decision_engine.run --ticker PG
 ```
 
+라이브 모드 예시:
+
+```bash
+py -3 -m decision_engine.run --ticker PG --mode live
+```
+
 추가 옵션:
 
 - `--market-regime {RISK_ON,NEUTRAL,RISK_OFF}`: 시장 레짐을 강제로 지정
+- `--mode {sample,live}`: 샘플/라이브 데이터 모드 선택 (기본값: sample)
+- `--use-adjusted-close`: Adj Close 사용 가능 시 지표 계산에 반영
 - `--json`: 동일한 결과를 JSON으로도 출력
 
 ## 테스트

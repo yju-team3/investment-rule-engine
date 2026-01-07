@@ -2,10 +2,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from dataclasses import asdict
 
+from decision_engine.data_sources import yfinance_source
 from decision_engine.engine import DecisionEngine
-from decision_engine.models import MarketRegime, MarketSnapshot, PortfolioConstraints, StockSnapshot
+from decision_engine.indicators import build_indicators
+from decision_engine.models import (
+    DecisionReport,
+    FinalDecision,
+    MarketRegime,
+    MarketSnapshot,
+    PortfolioConstraints,
+    StockSnapshot,
+)
 from decision_engine.rules import (
     BusinessClarityGate,
     Classifier,
@@ -125,6 +135,36 @@ def sample_stock_for_ticker(ticker: str) -> StockSnapshot:
     )
 
 
+def build_live_stock_snapshot(
+    ticker: str,
+    use_adjusted_close: bool = False,
+) -> tuple[StockSnapshot | None, str | None]:
+    data = yfinance_source.fetch_ohlcv(ticker)
+    if data is None:
+        return None, "라이브 데이터 수집 실패 또는 데이터가 없어 WAIT 처리."
+    indicators = build_indicators(data, use_adjusted_close=use_adjusted_close)
+    if indicators is None:
+        return None, "라이브 데이터 지표 산출에 필요한 데이터가 부족하여 WAIT 처리."
+
+    volatility_annual = indicators.volatility_20d * math.sqrt(252)
+    stock = StockSnapshot(
+        ticker=ticker.upper(),
+        price=indicators.latest_price,
+        avg_volume=indicators.volume_avg_20d,
+        volume=indicators.latest_volume,
+        volatility_annual=volatility_annual,
+        ma_50=indicators.ma_50,
+        ma_200=indicators.ma_200,
+        drawdown_6m=indicators.drawdown_6m,
+        dividend_yield=0.0,
+        earnings_risk=False,
+        regulatory_risk=False,
+        business_clarity=True,
+        sector_defensive=False,
+    )
+    return stock, None
+
+
 def print_report(title: str, report) -> None:
     print("=" * 60)
     print(title)
@@ -154,6 +194,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=[regime.value for regime in MarketRegime],
         help="Override market regime classification",
     )
+    parser.add_argument(
+        "--mode",
+        choices=["sample", "live"],
+        default="sample",
+        help="Use sample data or live data",
+    )
+    parser.add_argument(
+        "--use-adjusted-close",
+        action="store_true",
+        help="Use adjusted close price when available",
+    )
     parser.add_argument("--json", action="store_true", help="Also output JSON result")
     return parser.parse_args(argv)
 
@@ -164,12 +215,26 @@ def main(argv: list[str] | None = None) -> None:
     engine = build_engine()
     market = build_market_snapshot(regime_override)
     constraints = PortfolioConstraints(max_position_pct=0.08, tranche_count=3, max_risk_pct=0.02)
-    stock = sample_stock_for_ticker(args.ticker)
-    report = engine.evaluate(market, stock, constraints)
-    print_report(f"샘플 종목 {stock.ticker}", report)
+    ticker = args.ticker.upper()
+    if args.mode == "live":
+        stock, reason = build_live_stock_snapshot(ticker, use_adjusted_close=args.use_adjusted_close)
+        if stock is None:
+            report = DecisionReport(
+                FinalDecision.WAIT,
+                [reason or "라이브 데이터가 불완전하여 WAIT 처리."],
+                ["데이터 보완 후 재평가."],
+            )
+            print_report(f"라이브 종목 {ticker}", report)
+        else:
+            report = engine.evaluate(market, stock, constraints)
+            print_report(f"라이브 종목 {stock.ticker}", report)
+    else:
+        stock = sample_stock_for_ticker(ticker)
+        report = engine.evaluate(market, stock, constraints)
+        print_report(f"샘플 종목 {stock.ticker}", report)
     if args.json:
         print("(4) JSON")
-        print(report_to_json(report, stock.ticker, regime_override))
+        print(report_to_json(report, ticker, regime_override))
 
 
 if __name__ == "__main__":
