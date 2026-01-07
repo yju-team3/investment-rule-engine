@@ -54,6 +54,13 @@ python -m decision_engine.run --ticker PG
 py -3 -m decision_engine.run --ticker PG --mode live
 ```
 
+대량 스캔 예시:
+
+```bash
+py -3 -m decision_engine.scan --mode live --tickers "AAPL,MSFT,KO"
+py -3 -m decision_engine.scan --mode live --tickers tickers.txt
+```
+
 추가 옵션:
 
 - `--market-regime {RISK_ON,NEUTRAL,RISK_OFF}`: 시장 레짐을 강제로 지정
