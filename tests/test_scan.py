@@ -42,6 +42,14 @@ class DecisionEngineScanTests(unittest.TestCase):
         reason = scan.summarize_wait_reason(reason_log)
         self.assertEqual(reason, "연율 변동성이 높아 과도한 변동성으로 보류.")
 
+    def test_block_stage_entry_trigger_with_event_safe(self) -> None:
+        reason_log = [
+            "이벤트 리스크 없음.",
+            "지지/거래량 확인 필요.",
+        ]
+        block_stage = scan.infer_block_stage(reason_log, "WAIT")
+        self.assertEqual(block_stage, "ENTRY_TRIGGER")
+
 
 if __name__ == "__main__":
     unittest.main()
