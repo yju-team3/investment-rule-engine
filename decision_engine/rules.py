@@ -161,10 +161,12 @@ class DefensiveIncomeRule(ClassificationRule):
     def evaluate(self, stock: StockSnapshot, regime: MarketRegime) -> RuleResult:
         drawdown_ok = stock.drawdown_6m >= -0.15
         volatility_ok = stock.volatility_annual <= 0.25
-        price_above_ma_200 = stock.price >= stock.ma_200 * 0.97
-        price_not_extended = stock.price <= stock.ma_200 * 1.12
-        price_distance_ma_50 = abs(stock.price - stock.ma_50) / stock.ma_50
-        short_term_stable = price_distance_ma_50 <= 0.08 and stock.volume <= stock.avg_volume * 1.5
+        price_to_ma_200 = stock.price / stock.ma_200 if stock.ma_200 else 0.0
+        price_above_ma_200 = price_to_ma_200 >= 0.97
+        price_not_extended = price_to_ma_200 <= 1.12
+        price_distance_ma_50 = abs(stock.price - stock.ma_50) / stock.ma_50 if stock.ma_50 else 0.0
+        volume_ratio = stock.volume / stock.avg_volume if stock.avg_volume else 0.0
+        short_term_stable = price_distance_ma_50 <= 0.08 and volume_ratio <= 1.5
 
         passed = (
             drawdown_ok
@@ -173,12 +175,27 @@ class DefensiveIncomeRule(ClassificationRule):
             and price_not_extended
             and short_term_stable
         )
+        price_band_ok = price_above_ma_200 and price_not_extended
+        debug_lines = [
+            f"[DEF] drawdown_6m={stock.drawdown_6m:.2f} >= -0.15 ({'PASS' if drawdown_ok else 'FAIL'})",
+            f"[DEF] volatility_annual={stock.volatility_annual:.2f} <= 0.25 ({'PASS' if volatility_ok else 'FAIL'})",
+            (
+                f"[DEF] price_to_ma200={price_to_ma_200:.2f} within [0.97, 1.12] "
+                f"({'PASS' if price_band_ok else 'FAIL'})"
+            ),
+            (
+                "[DEF] overheat_check "
+                f"(ma50_distance={price_distance_ma_50:.2f} <= 0.08, "
+                f"volume_ratio={volume_ratio:.2f} <= 1.50) "
+                f"({'PASS' if short_term_stable else 'FAIL'})"
+            ),
+        ]
         message = (
             "완만한 6개월 낙폭, 낮은 변동성, 200MA 근처 안정, 단기 과열 없음."
             if passed
             else "방어형 가격/변동성 안정 조건 불충족."
         )
-        return RuleResult(self.name, passed, message)
+        return RuleResult(self.name, passed, "\n".join(debug_lines + [message]))
 
     def candidate_type(self) -> CandidateType:
         return CandidateType.DEFENSIVE_INCOME
@@ -242,7 +259,8 @@ class Classifier:
         messages: List[str] = []
         for rule in self.rules:
             result = rule.evaluate(stock, regime)
-            messages.append(result.message)
+            message_lines = result.message.splitlines()
+            messages.extend(message_lines if message_lines else [result.message])
             if result.passed:
                 hits.append(rule.candidate_type())
         if len(hits) == 1:

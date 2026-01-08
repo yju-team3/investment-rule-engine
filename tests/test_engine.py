@@ -1,6 +1,7 @@
 import unittest
 
 from decision_engine.engine import DecisionEngine
+from decision_engine.indicators import IndicatorSnapshot
 from decision_engine.models import (
     FinalDecision,
     MarketRegime,
@@ -135,6 +136,39 @@ class DecisionEngineTests(unittest.TestCase):
         report = self.engine.evaluate(self.market, stock, self.constraints)
         self.assertGreater(len(report.reason_log), 0)
         self.assertGreater(len(report.action_plan), 0)
+
+    def test_defensive_income_logs_failed_subcondition(self) -> None:
+        indicators = IndicatorSnapshot(
+            price_column="Close",
+            latest_price=100.0,
+            latest_volume=1000.0,
+            ma_20=100.0,
+            ma_50=100.0,
+            ma_60=100.0,
+            ma_100=100.0,
+            ma_200=100.0,
+            volatility_20d=0.02,
+            volume_avg_20d=1000.0,
+            volume_change_ratio=1.0,
+            drawdown_6m=-0.1,
+        )
+        stock = StockSnapshot(
+            ticker="DEF",
+            price=indicators.latest_price,
+            avg_volume=indicators.volume_avg_20d,
+            volume=indicators.latest_volume,
+            volatility_annual=indicators.volatility_20d * (252**0.5),
+            ma_50=indicators.ma_50,
+            ma_200=indicators.ma_200,
+            drawdown_6m=indicators.drawdown_6m,
+            dividend_yield=0.0,
+            earnings_risk=False,
+            regulatory_risk=False,
+            business_clarity=True,
+            sector_defensive=False,
+        )
+        report = self.engine.evaluate(self.market, stock, self.constraints)
+        self.assertTrue(any("[DEF]" in item and "(FAIL)" in item for item in report.reason_log))
 
 
 if __name__ == "__main__":
