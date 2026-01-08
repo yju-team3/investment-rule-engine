@@ -260,6 +260,33 @@ class Classifier:
     def __init__(self, rules: List[ClassificationRule]):
         self.rules = rules
 
+    def _apply_priority(
+        self,
+        hits: List[CandidateType],
+        stock: StockSnapshot,
+        messages: List[str],
+    ) -> CandidateType:
+        price_to_ma_200 = stock.price / stock.ma_200 if stock.ma_200 else 0.0
+        defensive_priority = (
+            CandidateType.DEFENSIVE_INCOME in hits
+            and price_to_ma_200 <= 1.10
+            and stock.volatility_annual <= 0.20
+        )
+        if defensive_priority:
+            messages.append("복수 후보 중 DEFENSIVE_INCOME 우선 규칙 적용.")
+            return CandidateType.DEFENSIVE_INCOME
+
+        priority_order = [
+            CandidateType.DEFENSIVE_INCOME,
+            CandidateType.TREND_PULLBACK,
+            CandidateType.MEAN_REVERSION,
+        ]
+        for candidate in priority_order:
+            if candidate in hits:
+                messages.append(f"복수 후보 중 우선순위 규칙으로 {candidate.value} 선택.")
+                return candidate
+        return hits[0]
+
     def classify(self, stock: StockSnapshot, regime: MarketRegime) -> ClassificationResult:
         hits: List[CandidateType] = []
         messages: List[str] = []
@@ -272,9 +299,9 @@ class Classifier:
         if len(hits) == 1:
             return ClassificationResult(hits[0], messages)
         if len(hits) > 1:
-            messages.append("후보 유형이 복수로 충돌하여 보류.")
-        else:
-            messages.append("후보 유형을 결정할 수 없음.")
+            selected = self._apply_priority(hits, stock, messages)
+            return ClassificationResult(selected, messages)
+        messages.append("후보 유형을 결정할 수 없음.")
         return ClassificationResult(None, messages)
 
 
