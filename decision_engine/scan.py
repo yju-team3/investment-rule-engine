@@ -14,6 +14,7 @@ from decision_engine.models import (
     FinalDecision,
     MarketRegime,
     PortfolioConstraints,
+    StockSnapshot,
 )
 from decision_engine.run import (
     build_engine,
@@ -29,6 +30,8 @@ class ScanResult:
     decision: str
     candidate_type: str | None
     wait_reason_top: str | None
+    block_stage: str
+    key_metrics: str
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -75,6 +78,15 @@ def extract_candidate_type(action_plan: Iterable[str]) -> str | None:
     return None
 
 
+EXCLUDED_REASON_PHRASES = (
+    "이벤트 리스크 없음",
+    "기준 통과",
+    "정합성 통과",
+    "유동성 기준 통과",
+    "비즈니스 구조 명확",
+)
+
+
 def summarize_wait_reason(reason_log: Iterable[str]) -> str:
     keywords = (
         "보류",
@@ -85,22 +97,77 @@ def summarize_wait_reason(reason_log: Iterable[str]) -> str:
         "데이터",
         "없음",
     )
-    excluded_phrases = (
-        "이벤트 리스크 없음",
-        "기준 통과",
-        "정합성 통과",
-        "유동성 기준 통과",
-        "비즈니스 구조 명확",
-    )
     candidates = [
         reason
         for reason in reason_log
         if any(keyword in reason for keyword in keywords)
-        and not any(phrase in reason for phrase in excluded_phrases)
+        and not any(phrase in reason for phrase in EXCLUDED_REASON_PHRASES)
     ]
     if candidates:
         return candidates[-1]
     return "(no blocking reason detected)"
+
+
+def infer_block_stage(reason_log: Iterable[str], decision: str) -> str:
+    if decision == FinalDecision.APPROVE.value:
+        return "NONE"
+
+    filtered_reasons = [
+        reason for reason in reason_log if not any(phrase in reason for phrase in EXCLUDED_REASON_PHRASES)
+    ]
+
+    data_keywords = ("데이터", "라이브 데이터", "수집 실패", "지표 산출", "오류")
+    candidate_keywords = ("후보 유형", "결정할 수 없음", "충돌")
+    entry_keywords = (
+        "지지/거래량 확인 필요",
+        "반등 구조 확인 필요",
+        "장기 추세 회복 확인 필요",
+        "진입 조건",
+        "거래량/이동평균 조건 재확인",
+        "1차 진입 조건 미충족",
+    )
+    hard_gate_keywords = (
+        "유동성",
+        "변동성",
+        "레짐",
+        "이벤트",
+        "비즈니스",
+        "사업 구조",
+        "규제",
+        "실적",
+        "거절",
+    )
+
+    if any(keyword in reason for reason in filtered_reasons for keyword in data_keywords):
+        return "DATA"
+    if any(keyword in reason for reason in filtered_reasons for keyword in candidate_keywords):
+        return "CANDIDATE"
+    if any(keyword in reason for reason in filtered_reasons for keyword in entry_keywords):
+        return "ENTRY_TRIGGER"
+    if any(keyword in reason for reason in filtered_reasons for keyword in hard_gate_keywords):
+        return "HARD_GATE"
+    return "HARD_GATE"
+
+
+def format_key_metrics(stock: StockSnapshot | None) -> str:
+    if stock is None:
+        return ""
+    price_to_ma200 = stock.price / stock.ma_200 if stock.ma_200 else None
+    volume_ratio = stock.volume / stock.avg_volume if stock.avg_volume else None
+    ma50_distance = abs(stock.price - stock.ma_50) / stock.ma_50 if stock.ma_50 else None
+    metrics = {
+        "price_to_ma200": price_to_ma200,
+        "volatility_annual": stock.volatility_annual,
+        "drawdown_6m": stock.drawdown_6m,
+        "volume_ratio": volume_ratio,
+        "ma50_distance": ma50_distance,
+    }
+    parts = []
+    for key, value in metrics.items():
+        if value is None:
+            continue
+        parts.append(f"{key}={value:.4f}")
+    return ", ".join(parts)
 
 
 def evaluate_ticker(
@@ -130,12 +197,16 @@ def evaluate_ticker(
     wait_reason_top = None
     if report.decision == FinalDecision.WAIT:
         wait_reason_top = summarize_wait_reason(report.reason_log)
+    block_stage = infer_block_stage(report.reason_log, report.decision.value)
+    key_metrics = format_key_metrics(stock)
 
     return ScanResult(
         ticker=ticker,
         decision=report.decision.value,
         candidate_type=candidate_type,
         wait_reason_top=wait_reason_top,
+        block_stage=block_stage,
+        key_metrics=key_metrics,
     )
 
 
@@ -143,7 +214,14 @@ def write_csv(path: str, results: list[ScanResult]) -> None:
     with open(path, "w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(
             handle,
-            fieldnames=["ticker", "decision", "candidate_type", "wait_reason_top"],
+            fieldnames=[
+                "ticker",
+                "decision",
+                "candidate_type",
+                "wait_reason_top",
+                "block_stage",
+                "key_metrics",
+            ],
         )
         writer.writeheader()
         for result in results:
@@ -153,6 +231,8 @@ def write_csv(path: str, results: list[ScanResult]) -> None:
                     "decision": result.decision,
                     "candidate_type": result.candidate_type or "",
                     "wait_reason_top": result.wait_reason_top or "",
+                    "block_stage": result.block_stage,
+                    "key_metrics": result.key_metrics,
                 }
             )
 
@@ -163,13 +243,16 @@ def format_markdown(results: list[ScanResult]) -> str:
     wait_reasons = Counter(
         result.wait_reason_top for result in results if result.decision == FinalDecision.WAIT.value
     )
+    block_stages = Counter(result.block_stage for result in results)
 
     lines = ["# 스캔 결과", "", "## 요약 테이블", ""]
-    lines.append("| Ticker | Decision | Candidate Type | WAIT Reason |")
-    lines.append("| --- | --- | --- | --- |")
+    lines.append("| Ticker | Decision | Candidate Type | WAIT Reason | Block Stage | Key Metrics |")
+    lines.append("| --- | --- | --- | --- | --- | --- |")
     for result in results:
         lines.append(
-            f"| {result.ticker} | {result.decision} | {result.candidate_type or ''} | {result.wait_reason_top or ''} |"
+            "| "
+            f"{result.ticker} | {result.decision} | {result.candidate_type or ''} | "
+            f"{result.wait_reason_top or ''} | {result.block_stage} | {result.key_metrics} |"
         )
 
     lines.extend(["", "## 통계", ""])
@@ -190,6 +273,13 @@ def format_markdown(results: list[ScanResult]) -> str:
             lines.append(f"- {reason}: {count}")
     else:
         lines.append("- WAIT 사유 없음")
+
+    lines.extend(["", "### Block Stage 분포"])
+    if block_stages:
+        for stage, count in block_stages.most_common():
+            lines.append(f"- {stage}: {count}")
+    else:
+        lines.append("- Block Stage 없음")
 
     if decisions.get(FinalDecision.APPROVE.value, 0) == 0:
         lines.extend(["", "⚠️ APPROVE가 0개입니다. 진입 트리거가 과도할 가능성이 있습니다."])
@@ -230,6 +320,8 @@ def main(argv: list[str] | None = None) -> None:
                 decision=FinalDecision.WAIT.value,
                 candidate_type=None,
                 wait_reason_top=f"스캔 오류로 WAIT 처리: {exc}",
+                block_stage="DATA",
+                key_metrics="",
             )
         results.append(result)
 
