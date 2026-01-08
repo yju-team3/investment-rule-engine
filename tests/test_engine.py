@@ -170,6 +170,48 @@ class DecisionEngineTests(unittest.TestCase):
         report = self.engine.evaluate(self.market, stock, self.constraints)
         self.assertTrue(any("[DEF]" in item and "(FAIL)" in item for item in report.reason_log))
 
+    def test_defensive_income_price_to_ma200_lower_bound_passes(self) -> None:
+        stock = StockSnapshot(
+            ticker="DEFLOW",
+            price=97.0,
+            avg_volume=1000.0,
+            volume=1000.0,
+            volatility_annual=0.2,
+            ma_50=97.0,
+            ma_200=100.0,
+            drawdown_6m=-0.1,
+            dividend_yield=0.0,
+            earnings_risk=False,
+            regulatory_risk=False,
+            business_clarity=True,
+            sector_defensive=False,
+        )
+        result = DefensiveIncomeRule().evaluate(stock, MarketRegime.RISK_ON)
+        self.assertTrue(result.passed)
+        self.assertIn("price_to_ma200=0.970000", result.message)
+        self.assertIn("within [0.969999, 1.120001]", result.message)
+
+    def test_defensive_income_price_to_ma200_near_upper_passes(self) -> None:
+        stock = StockSnapshot(
+            ticker="DEFHIGH",
+            price=112.00005,
+            avg_volume=1000.0,
+            volume=1000.0,
+            volatility_annual=0.2,
+            ma_50=112.00005,
+            ma_200=100.0,
+            drawdown_6m=-0.1,
+            dividend_yield=0.0,
+            earnings_risk=False,
+            regulatory_risk=False,
+            business_clarity=True,
+            sector_defensive=False,
+        )
+        result = DefensiveIncomeRule().evaluate(stock, MarketRegime.RISK_ON)
+        self.assertTrue(result.passed)
+        self.assertIn("price_to_ma200=1.120000", result.message)
+        self.assertIn("within [0.969999, 1.120001]", result.message)
+
 
 if __name__ == "__main__":
     unittest.main()
