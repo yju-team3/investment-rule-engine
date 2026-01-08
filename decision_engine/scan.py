@@ -75,12 +75,20 @@ def extract_candidate_type(action_plan: Iterable[str]) -> str | None:
     return None
 
 
-def summarize_wait_reason(reason_log: Iterable[str]) -> str | None:
-    keywords = ("보류", "대기", "미충족", "충돌", "결정", "부족", "거절", "리스크")
-    for reason in reason_log:
-        if any(keyword in reason for keyword in keywords):
-            return reason
-    return next(iter(reason_log), None)
+def summarize_wait_reason(reason_log: Iterable[str]) -> str:
+    keywords = (
+        "보류",
+        "불충족",
+        "필요",
+        "결정할 수 없음",
+        "실패",
+        "데이터",
+        "없음",
+    )
+    candidates = [reason for reason in reason_log if any(keyword in reason for keyword in keywords)]
+    if candidates:
+        return candidates[-1]
+    return "(no blocking reason detected)"
 
 
 def evaluate_ticker(

@@ -34,6 +34,14 @@ class DecisionEngineScanTests(unittest.TestCase):
                     rows = list(csv.DictReader(handle))
                 self.assertEqual(len(rows), 3)
 
+    def test_wait_reason_prefers_blocking_candidate(self) -> None:
+        reason_log = [
+            "이벤트 리스크 없음.",
+            "연율 변동성이 높아 과도한 변동성으로 보류.",
+        ]
+        reason = scan.summarize_wait_reason(reason_log)
+        self.assertEqual(reason, "연율 변동성이 높아 과도한 변동성으로 보류.")
+
 
 if __name__ == "__main__":
     unittest.main()
