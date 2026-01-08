@@ -162,8 +162,13 @@ class DefensiveIncomeRule(ClassificationRule):
         drawdown_ok = stock.drawdown_6m >= -0.15
         volatility_ok = stock.volatility_annual <= 0.25
         price_to_ma_200 = stock.price / stock.ma_200 if stock.ma_200 else 0.0
-        price_above_ma_200 = price_to_ma_200 >= 0.97
-        price_not_extended = price_to_ma_200 <= 1.12
+        lower_bound = 0.97
+        upper_bound = 1.12
+        epsilon = 1e-6
+        lower_bound_with_eps = lower_bound - epsilon
+        upper_bound_with_eps = upper_bound + epsilon
+        price_above_ma_200 = price_to_ma_200 >= lower_bound_with_eps
+        price_not_extended = price_to_ma_200 <= upper_bound_with_eps
         price_distance_ma_50 = abs(stock.price - stock.ma_50) / stock.ma_50 if stock.ma_50 else 0.0
         volume_ratio = stock.volume / stock.avg_volume if stock.avg_volume else 0.0
         short_term_stable = price_distance_ma_50 <= 0.08 and volume_ratio <= 1.5
@@ -180,7 +185,8 @@ class DefensiveIncomeRule(ClassificationRule):
             f"[DEF] drawdown_6m={stock.drawdown_6m:.2f} >= -0.15 ({'PASS' if drawdown_ok else 'FAIL'})",
             f"[DEF] volatility_annual={stock.volatility_annual:.2f} <= 0.25 ({'PASS' if volatility_ok else 'FAIL'})",
             (
-                f"[DEF] price_to_ma200={price_to_ma_200:.2f} within [0.97, 1.12] "
+                f"[DEF] price_to_ma200={price_to_ma_200:.6f} within "
+                f"[{lower_bound_with_eps:.6f}, {upper_bound_with_eps:.6f}] "
                 f"({'PASS' if price_band_ok else 'FAIL'})"
             ),
             (
