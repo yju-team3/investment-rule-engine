@@ -159,8 +159,25 @@ class DefensiveIncomeRule(ClassificationRule):
     name: str = "defensive_income"
 
     def evaluate(self, stock: StockSnapshot, regime: MarketRegime) -> RuleResult:
-        passed = stock.dividend_yield >= 0.03 and stock.sector_defensive
-        message = "배당과 방어 섹터 요건 충족." if passed else "방어/배당 조건 불충족."
+        drawdown_ok = stock.drawdown_6m >= -0.15
+        volatility_ok = stock.volatility_annual <= 0.25
+        price_above_ma_200 = stock.price >= stock.ma_200 * 0.97
+        price_not_extended = stock.price <= stock.ma_200 * 1.12
+        price_distance_ma_50 = abs(stock.price - stock.ma_50) / stock.ma_50
+        short_term_stable = price_distance_ma_50 <= 0.08 and stock.volume <= stock.avg_volume * 1.5
+
+        passed = (
+            drawdown_ok
+            and volatility_ok
+            and price_above_ma_200
+            and price_not_extended
+            and short_term_stable
+        )
+        message = (
+            "완만한 6개월 낙폭, 낮은 변동성, 200MA 근처 안정, 단기 과열 없음."
+            if passed
+            else "방어형 가격/변동성 안정 조건 불충족."
+        )
         return RuleResult(self.name, passed, message)
 
     def candidate_type(self) -> CandidateType:
