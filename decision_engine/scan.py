@@ -85,7 +85,19 @@ def summarize_wait_reason(reason_log: Iterable[str]) -> str:
         "데이터",
         "없음",
     )
-    candidates = [reason for reason in reason_log if any(keyword in reason for keyword in keywords)]
+    excluded_phrases = (
+        "이벤트 리스크 없음",
+        "기준 통과",
+        "정합성 통과",
+        "유동성 기준 통과",
+        "비즈니스 구조 명확",
+    )
+    candidates = [
+        reason
+        for reason in reason_log
+        if any(keyword in reason for keyword in keywords)
+        and not any(phrase in reason for phrase in excluded_phrases)
+    ]
     if candidates:
         return candidates[-1]
     return "(no blocking reason detected)"
