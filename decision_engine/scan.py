@@ -32,6 +32,7 @@ class ScanResult:
     wait_reason_top: str | None
     block_stage: str
     key_metrics: str
+    stock: StockSnapshot | None
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -170,6 +171,81 @@ def format_key_metrics(stock: StockSnapshot | None) -> str:
     return ", ".join(parts)
 
 
+def evaluate_entry_trigger_conditions(result: ScanResult) -> dict[str, bool] | None:
+    if result.stock is None or not result.candidate_type:
+        return None
+
+    stock = result.stock
+    candidate_type = result.candidate_type
+
+    if candidate_type == "TREND_PULLBACK":
+        volume_threshold = 1.2
+        volume_pass = stock.volume >= stock.avg_volume * volume_threshold
+        ma_pass = stock.price > stock.ma_50
+        volatility_pass = stock.volatility_annual <= 0.45
+    elif candidate_type == "MEAN_REVERSION":
+        volume_threshold = 1.3
+        volume_pass = stock.volume >= stock.avg_volume * volume_threshold
+        ma_pass = stock.price > stock.ma_50
+        volatility_pass = stock.volatility_annual <= 0.45
+    elif candidate_type == "DEFENSIVE_INCOME":
+        volume_threshold = 1.0
+        volume_pass = stock.volume >= stock.avg_volume * volume_threshold
+        ma_pass = stock.price > stock.ma_200
+        volatility_pass = stock.volatility_annual <= 0.25
+    else:
+        return None
+
+    return {
+        "거래량 조건": volume_pass,
+        "이동평균 조건": ma_pass,
+        "변동성 조건": volatility_pass,
+    }
+
+
+def analyze_entry_trigger_waits(
+    entry_trigger_waits: list[ScanResult],
+) -> tuple[dict[str, Counter], list[tuple[str, int]], dict[str, int], list[str]]:
+    trigger_counts: dict[str, Counter] = {
+        "거래량 조건": Counter(),
+        "이동평균 조건": Counter(),
+        "변동성 조건": Counter(),
+    }
+    fail_counts = Counter()
+    simulations = {
+        "거래량 조건": 0,
+        "이동평균 조건": 0,
+        "변동성 조건": 0,
+    }
+
+    for result in entry_trigger_waits:
+        evaluation = evaluate_entry_trigger_conditions(result)
+        if evaluation is None:
+            continue
+        volume_pass = evaluation["거래량 조건"]
+        ma_pass = evaluation["이동평균 조건"]
+        volatility_pass = evaluation["변동성 조건"]
+        for trigger_name, passed in evaluation.items():
+            trigger_counts[trigger_name]["PASS" if passed else "FAIL"] += 1
+            if not passed:
+                fail_counts[trigger_name] += 1
+        if not volume_pass and ma_pass and volatility_pass:
+            simulations["거래량 조건"] += 1
+        if volume_pass and not ma_pass and volatility_pass:
+            simulations["이동평균 조건"] += 1
+        if volume_pass and ma_pass and not volatility_pass:
+            simulations["변동성 조건"] += 1
+
+    top_fails = fail_counts.most_common(3)
+    notes = [
+        "TREND_PULLBACK: 거래량>=1.2배, 가격>MA50, 변동성<=0.45.",
+        "MEAN_REVERSION: 거래량>=1.3배, 가격>MA50, 변동성<=0.45.",
+        "DEFENSIVE_INCOME: 거래량>=1.0배, 가격>MA200, 변동성<=0.25.",
+        "시뮬레이션은 해당 트리거 1개만 FAIL인 경우에 한해 APPROVE 전환 가능 수로 집계.",
+    ]
+    return trigger_counts, top_fails, simulations, notes
+
+
 def evaluate_ticker(
     engine: DecisionEngine,
     ticker: str,
@@ -207,6 +283,7 @@ def evaluate_ticker(
         wait_reason_top=wait_reason_top,
         block_stage=block_stage,
         key_metrics=key_metrics,
+        stock=stock,
     )
 
 
@@ -244,6 +321,11 @@ def format_markdown(results: list[ScanResult]) -> str:
         result.wait_reason_top for result in results if result.decision == FinalDecision.WAIT.value
     )
     block_stages = Counter(result.block_stage for result in results)
+    entry_trigger_waits = [
+        result
+        for result in results
+        if result.decision == FinalDecision.WAIT.value and result.block_stage == "ENTRY_TRIGGER"
+    ]
 
     lines = ["# 스캔 결과", "", "## 요약 테이블", ""]
     lines.append("| Ticker | Decision | Candidate Type | WAIT Reason | Block Stage | Key Metrics |")
@@ -284,6 +366,28 @@ def format_markdown(results: list[ScanResult]) -> str:
     if decisions.get(FinalDecision.APPROVE.value, 0) == 0:
         lines.extend(["", "⚠️ APPROVE가 0개입니다. 진입 트리거가 과도할 가능성이 있습니다."])
 
+    lines.extend(["", "### ENTRY_TRIGGER WAIT 분석"])
+    if entry_trigger_waits:
+        trigger_counts, trigger_fails, trigger_simulations, trigger_notes = analyze_entry_trigger_waits(
+            entry_trigger_waits
+        )
+        lines.extend(["", "#### 트리거 조건별 PASS/FAIL"])
+        for trigger_name, counts in trigger_counts.items():
+            lines.append(f"- {trigger_name}: PASS {counts['PASS']} / FAIL {counts['FAIL']}")
+
+        lines.extend(["", "#### FAIL 빈도 Top 3"])
+        for trigger, count in trigger_fails:
+            lines.append(f"- {trigger}: {count}")
+
+        lines.extend(["", "#### 트리거 완화 시 APPROVE 전환 시뮬레이션"])
+        for trigger_name, count in trigger_simulations.items():
+            lines.append(f"- {trigger_name} 완화 시 전환 예상: {count}")
+
+        lines.extend(["", "#### 트리거 판정 기준"])
+        lines.extend([f"- {note}" for note in trigger_notes])
+    else:
+        lines.append("- ENTRY_TRIGGER에서 WAIT된 종목이 없습니다.")
+
     return "\n".join(lines) + "\n"
 
 
@@ -322,6 +426,7 @@ def main(argv: list[str] | None = None) -> None:
                 wait_reason_top=f"스캔 오류로 WAIT 처리: {exc}",
                 block_stage="DATA",
                 key_metrics="",
+                stock=None,
             )
         results.append(result)
 
